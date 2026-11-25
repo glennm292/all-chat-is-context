@@ -1,0 +1,31 @@
+name = "context"
+display_name = "Context"
+# What the app is for, in the person's terms: what an agent reads to decide whether this app
+# does what it needs. The app's API document (served at api_schema_path) carries it too.
+description = "Every conversation with your AI, organized into living topics: where each subject stands, the work it produced, and the conversation to continue it."
+api_schema_path = "/api/schema"
+icon = "icon.svg"
+priority = "user"
+program = "context"
+# The shell stops the app once no window shows it (a minute after the last one
+# closes) and starts it again on the next request; false keeps it running for
+# the life of the workspace. Set false if the app does work between requests
+# (a background thread, a poller, a subscription to an outside service, a job
+# that outlives the window): a stop loses that work. Periodic work (a refresh
+# every N minutes, a nightly sync) is a routine, not a loop in the service:
+# see the manage-routines skill.
+stop_when_no_windows = true
+
+# How update-app boots a throwaway preview of this app: on a free port, over a
+# scratch copy of its data (see .agents/skills/update-app/scripts/preview_app.py).
+[preview]
+env = {CONTEXT_PORT = "{port:main}", CONTEXT_HOST = "{host}", CONTEXT_DATA_DIR = "{copy:data}"}
+copies = {data = "data/.apps/context"}
+
+[[references]]
+path = "system/routines/context-sorting.toml"
+note = "The routine that runs python -m context.sync every 10 minutes: sorts new conversations into topics and rewrites the topics that changed"
+
+[[references]]
+path = ".agents/skills/all-chat-is-context"
+note = "The published skill that installs this app, its sorting routine and their tests into any workspace (its assets/app is a copy of this directory)"

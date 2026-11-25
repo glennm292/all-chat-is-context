@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Context</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app" id="app" data-view="topic">
+  <nav class="topics" id="topics"><h1>Context</h1></nav>
+  <div class="bar">
+    <button id="show-topics" class="bar-btn" aria-label="Topics">Topics</button>
+    <span id="bar-title" class="bar-title"></span>
+    <span class="switch">
+      <button id="view-topic" class="on">Topic</button><button id="view-talk">Talk</button>
+    </span>
+  </div>
+  <main class="context" id="context"></main>
+  <aside class="talk">
+    <div class="talk-head"><span>Conversation</span><button id="hide-talk" title="Hide the conversation">Hide</button></div>
+    <button class="talk-strip" id="show-talk" title="Show the conversation">Conversation</button>
+    <div class="thread" id="thread"></div>
+    <div class="composer">
+      <textarea id="say" placeholder="Keep talking about this…"></textarea>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+</div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
