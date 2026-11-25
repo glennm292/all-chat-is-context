@@ -4,6 +4,7 @@ State kept under the data dir in live.json:
   chats:     topic id -> the chat (its first agent's id) that carries the topic's conversation
   artifacts: topic id -> things the assistant delivered into the topic, newest first
   prose:     topic id -> the topic's current text, when the assistant has rewritten it
+  moves:     conversations that went on to a new topic, as {from, to, at}, shown in the old topic's thread
 """
 
 import html
@@ -11,6 +12,7 @@ import json
 import os
 import re
 import threading
+from datetime import datetime, timezone
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -35,7 +37,13 @@ def read_state(data_dir: Path) -> dict:
     state = json.loads(path.read_text()) if path.is_file() else {}
     for key in ("chats", "artifacts", "prose"):
         state.setdefault(key, {})
+    state.setdefault("moves", [])
     return state
+
+
+def record_move(data_dir: Path, from_topic: str, to_topic: str, at: str) -> None:
+    """Note in the old topic's thread that a conversation went on to a new topic, at the moment it did."""
+    _update(data_dir, lambda s: s["moves"].append({"from": from_topic, "to": to_topic, "at": at}))
 
 
 def _update(data_dir: Path, change) -> dict:
@@ -78,7 +86,18 @@ The person sees this conversation beside the topic's main pane, which shows the 
   (kind "skill" takes "skill": "<skill name>"; kind "image" takes "path": "<absolute path of a .png/.jpg/.svg under /home/user/workspace/data>")
 When where the topic stands has changed, rewrite its text (a few short plain paragraphs, the person's words, no headings or lists):
   curl -s -X PUT {CONTEXT_API}/api/topics/{tid}/text -H 'Content-Type: application/json' -d '{{"paragraphs": ["...", "..."]}}'
-Earlier conversations on this topic are in the Context app's data at data/.apps/context/conversations.json if you need them."""
+Earlier conversations on this topic are in the Context app's data at data/.apps/context/conversations.json if you need them.{_spin_off_note(topic)}"""
+
+
+def _spin_off_note(topic: dict) -> str:
+    """Other topics and Internal notes hold small things; a conversation there that grows into its own subject moves out."""
+    if topic.get("kind", "topic") == "topic":
+        return ""
+    return f"""
+
+"{topic['name']}" only holds small one-off exchanges. The moment this conversation produces something lasting (the first working version of an app, a skill, a document) or clearly grows into a subject of its own, give it its own topic, before telling the person you are done:
+  curl -s -X POST {CONTEXT_API}/api/topics/{topic['id']}/spin-off -H 'Content-Type: application/json' -d '{{"name": "<short name for the subject>", "paragraphs": ["<where it stands>"]}}'
+It answers with the new topic's id. This conversation and what it delivered move there, and from then on use that id instead of "{topic['id']}" for deliveries and the text. Then rewrite "{topic['name']}"'s text without what moved out."""
 
 
 def split_first_message(text: str) -> tuple[str, str] | None:
@@ -129,8 +148,53 @@ def chat_messages(chat_id: str) -> list[dict]:
 def add_artifact(data_dir: Path, topic_id: str, artifact: dict) -> None:
     def change(state):
         items = [a for a in state["artifacts"].get(topic_id, []) if a.get("title") != artifact["title"]]
-        state["artifacts"][topic_id] = [artifact, *items]
+        chat_id = state["chats"].get(topic_id)
+        # Remember which conversation delivered it, so it goes along if that conversation becomes its own topic.
+        state["artifacts"][topic_id] = [{**artifact, "chat": chat_id} if chat_id else artifact, *items]
     _update(data_dir, change)
+
+
+def slug(name: str, taken: set[str]) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "topic"
+    found, n = base, 2
+    while found in taken:
+        found, n = f"{base}-{n}", n + 1
+    return found
+
+
+class SpinOffError(ValueError):
+    """The topic has no conversation of its own to move out."""
+
+
+def spin_off(data_dir: Path, topic_id: str, name: str, paragraphs: list[str]) -> str:
+    """Give the conversation going on in Other topics (or Internal notes) a topic of its own; returns the new topic's id.
+
+    The conversation, what it delivered and the given text move to the new topic, which the sorter then treats like
+    any other (topics.json is otherwise written only by the sorter, which keeps topics added while it ran)."""
+    topics_path = data_dir / "topics.json"
+    with _lock:
+        state = read_state(data_dir)
+        chat_id = state["chats"].get(topic_id)
+        if chat_id is None:
+            raise SpinOffError(f"{topic_id} has no conversation going on to give its own topic")
+        topics = json.loads(topics_path.read_text())
+        new_id = slug(name, {t["id"] for t in topics})
+        topics.insert(0, {"id": new_id, "name": name, "kind": "topic", "segments": [], "prose": [], "artifacts": []})
+        tmp = topics_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(topics, indent=1))
+        tmp.replace(topics_path)
+    def change(s):
+        del s["chats"][topic_id]
+        s["chats"][new_id] = chat_id
+        mine = [a for a in s["artifacts"].get(topic_id, []) if a.get("chat") == chat_id]
+        s["artifacts"][topic_id] = [a for a in s["artifacts"].get(topic_id, []) if a.get("chat") != chat_id]
+        s["artifacts"][new_id] = mine
+    _update(data_dir, change)
+    set_prose(data_dir, new_id, paragraphs)
+    # All of the conversation moves, so the note sits where it began.
+    messages = chat_messages(chat_id)
+    record_move(data_dir, topic_id, new_id, messages[0]["at"] if messages else datetime.now(timezone.utc).isoformat())
+    return new_id
 
 
 ALLOWED_TAGS = re.compile(r"</?(?:em|strong)>")

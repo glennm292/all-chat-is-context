@@ -89,3 +89,45 @@ def test_rewritten_text_keeps_only_message_and_topic_links_and_emphasis() -> Non
     cleaned = sync.clean_paragraph('See <a data-moment="agent-a:4">this</a>, <a href="https://x">that</a>, <em>now</em> <img src=x onerror=1>')
     assert cleaned == ('See <a data-moment="agent-a:4">this</a>, &lt;a href=&quot;https://x&quot;&gt;that&lt;/a&gt;, '
                        "<em>now</em> &lt;img src=x onerror=1&gt;")
+
+
+def test_a_conversation_in_other_topics_moves_to_its_own_topic_with_what_it_delivered(data_dir: Path) -> None:
+    live._update(data_dir, lambda s: s["chats"].__setitem__("other", "agent-s"))
+    live.add_artifact(data_dir, "other", {"kind": "app", "title": "Sudoku", "app": "sudoku"})
+    live._update(data_dir, lambda s: s["artifacts"]["other"].append({"kind": "app", "title": "Older", "app": "older"}))
+    new_id = live.spin_off(data_dir, "other", "Sudoku game", ["An ad-free Sudoku."])
+    assert new_id == "sudoku-game"
+    topics = {t.id: t for t in load_topics(data_dir, {}).topics}
+    assert topics["sudoku-game"].kind == "topic"
+    assert topics["sudoku-game"].prose == ["An ad-free Sudoku."]
+    assert [a.title for a in topics["sudoku-game"].artifacts] == ["Sudoku"]
+    assert [a.title for a in topics["other"].artifacts] == ["Older"]
+    assert live.read_state(data_dir)["chats"] == {"sudoku-game": "agent-s"}
+    moved = [i for i in topics["other"].thread if i.kind == "moved"]
+    assert [(i.text, i.topic) for i in moved] == [("Sudoku game moved to its own topic", "sudoku-game")]
+
+
+def test_a_move_shows_in_the_old_thread_at_the_moment_it_happened(data_dir: Path) -> None:
+    (data_dir / "topics.json").write_text(json.dumps([
+        *json.loads((data_dir / "topics.json").read_text()),
+        {"id": "japan", "name": "Japan trip", "kind": "topic", "prose": [], "artifacts": [], "segments": []},
+    ]))
+    live.record_move(data_dir, "game", "japan", "2026-11-02T12:00:00Z")
+    live.record_move(data_dir, "game", "gone", "2026-11-02T12:00:00Z")  # a topic since removed shows nothing
+    thread = next(t for t in load_topics(data_dir, {}).topics if t.id == "game").thread
+    kinds = [(i.kind, i.text) for i in thread if i.kind in ("message", "moved")]
+    assert kinds[1] == ("message", "Here it is.")
+    assert kinds[2] == ("moved", "Japan trip moved to its own topic")
+    assert kinds[3] == ("message", "add more figures")
+    assert sum(1 for i in thread if i.kind == "moved") == 1
+
+
+def test_only_a_topic_with_its_own_conversation_can_move_one_out(data_dir: Path) -> None:
+    with pytest.raises(live.SpinOffError):
+        live.spin_off(data_dir, "other", "Nothing", ["x"])
+
+
+def test_the_background_of_other_topics_says_how_to_move_out_and_a_real_topic_does_not() -> None:
+    other = {"id": "other", "name": "Other topics", "kind": "other", "prose": []}
+    assert "/api/topics/other/spin-off" in live.briefing(other)
+    assert "spin-off" not in live.briefing({**other, "id": "game", "kind": "topic"})

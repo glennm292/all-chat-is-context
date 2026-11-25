@@ -80,6 +80,19 @@ class DeliverRequest(FrozenModel):
     path: str | None = Field(default=None, description="For an image: its absolute path under /home/user/workspace/data")
 
 
+class SpinOffRequest(FrozenModel):
+    """A conversation in Other topics or Internal notes that has grown into a subject of its own."""
+
+    name: str = Field(description="What to call the new topic")
+    paragraphs: list[str] = Field(description="Where the subject stands, as the new topic's text")
+
+
+class SpinOffResponse(FrozenModel):
+    """The topic the conversation moved to."""
+
+    topic_id: str = Field(description="The new topic's id, for deliveries and text from now on")
+
+
 class TextRequest(FrozenModel):
     """A topic's rewritten text."""
 
@@ -176,6 +189,7 @@ ROUTE_TABLE: RouteTable = {
     ("POST", "/api/topics/{topic_id}/message"): RouteModels(request_model=SayRequest, response_model=DoneResponse),
     ("POST", "/api/topics/{topic_id}/deliveries"): RouteModels(request_model=DeliverRequest, response_model=DoneResponse, success_status=201),
     ("PUT", "/api/topics/{topic_id}/text"): RouteModels(request_model=TextRequest, response_model=DoneResponse),
+    ("POST", "/api/topics/{topic_id}/spin-off"): RouteModels(request_model=SpinOffRequest, response_model=SpinOffResponse, success_status=201),
     ("GET", "/media/{path}"): SchemalessRoute(reason="a picture a topic produced or was sent"),
     ("GET", "/health"): RouteModels(response_model=HealthResponse),
     ("POST", "/_csp-report"): SchemalessRoute(reason="the browser's report of what the page's policy blocked"),
@@ -285,6 +299,25 @@ def rewrite(topic_id: str) -> Response:
         return error_response("The text is empty", 400)
     live.set_prose(Path(DATA_DIR), topic_id, paragraphs)
     return model_response(DoneResponse(status="ok"))
+
+
+@app.route("/api/topics/<topic_id>/spin-off", methods=["POST"])
+def spin_off(topic_id: str) -> Response:
+    """Give a conversation going on in Other topics or Internal notes a topic of its own, with what it delivered."""
+    body = parse_request_body(SpinOffRequest)
+    topic = seeded_topic(topic_id)
+    if topic is None:
+        return error_response(f"There is no topic {topic_id}", 404)
+    if topic.get("kind", "topic") == "topic":
+        return error_response("Only a conversation in Other topics or Internal notes moves to a topic of its own", 400)
+    paragraphs = [p.strip() for p in body.paragraphs if p.strip()]
+    if not body.name.strip() or not paragraphs:
+        return error_response("The new topic needs a name and some text", 400)
+    try:
+        new_id = live.spin_off(Path(DATA_DIR), topic_id, body.name.strip(), paragraphs)
+    except live.SpinOffError as e:
+        return error_response(str(e), 409)
+    return model_response(SpinOffResponse(topic_id=new_id), 201)
 
 
 _app_links: tuple[float, dict[str, str]] = (0.0, {})

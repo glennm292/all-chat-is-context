@@ -40,6 +40,14 @@ def _read(name: str, default):
     return json.loads(path.read_text()) if path.is_file() else default
 
 
+def _save_topics(topics: list[dict]) -> None:
+    """Write the topics, keeping any a topic's conversation gave itself while this run was sorting (live.spin_off)."""
+    known = {t["id"] for t in topics}
+    added = [t for t in _read("topics.json", []) if t["id"] not in known]
+    _write("topics.json", added + topics)
+    topics[:0] = added
+
+
 def _write(name: str, value) -> None:
     tmp = (DATA / name).with_suffix(".tmp")
     tmp.write_text(json.dumps(value, indent=1))
@@ -126,35 +134,32 @@ def sort_batch(work: list[dict], topics: list[dict]) -> dict:
     return json.loads(found.group(0))
 
 
-def _slug(name: str, taken: set[str]) -> str:
-    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "topic"
-    slug, n = base, 2
-    while slug in taken:
-        slug, n = f"{base}-{n}", n + 1
-    return slug
-
-
 def live_prose(topic: dict) -> list[str]:
     return live.read_state(DATA)["prose"].get(topic["id"]) or topic.get("prose", [])
 
 
-def apply_sorting(work: list[dict], answer: dict, topics: list[dict], sort_state: dict) -> set[str]:
-    """Add the sorted pieces to their topics; returns the ids of the topics that gained something."""
+def apply_sorting(work: list[dict], answer: dict, topics: list[dict], sort_state: dict, moves: list[dict] | None = None) -> set[str]:
+    """Add the sorted pieces to their topics; returns the ids of the topics that gained something.
+
+    A conversation that went on from one topic to a newly made one is added to ``moves`` as {from, to, at}."""
     by_id = {t["id"]: t for t in topics}
     new_by_name: dict[str, str] = {}
     changed: set[str] = set()
     for piece in answer.get("pieces", []):
         item = work[int(piece["stretch"]) - 1]
         topic_id = piece["topic"]
+        previous = _last_topic_of(item["conversation"]["agent_id"], topics)
         if topic_id == "new":
             name = (piece.get("new_name") or piece.get("about") or "New topic").strip()
             topic_id = new_by_name.get(name)
             if topic_id is None:
-                topic_id = _slug(name, set(by_id))
+                topic_id = live.slug(name, set(by_id))
                 by_id[topic_id] = {"id": topic_id, "name": name, "kind": "topic", "segments": [], "prose": [], "artifacts": []}
                 topics.insert(0, by_id[topic_id])
                 new_by_name[name] = topic_id
                 log(f"new topic: {name}")
+                if previous and previous != topic_id and moves is not None:  # it was going on elsewhere: say where it went
+                    moves.append({"from": previous, "to": topic_id, "at": item["messages"][int(piece["from"])]["at"]})
         if topic_id not in by_id:
             topic_id = "other"
         start = item["from"] + int(piece["from"])
@@ -282,6 +287,7 @@ def run(skip_refresh: bool = False, dry_run: bool = False) -> None:
         return
     by_id = {t["id"]: t for t in topics}
     changed: set[str] = set()
+    moves: list[dict] = []
 
     for item in [w for w in work if internal_only(w)]:
         agent = item["conversation"]["agent_id"]
@@ -304,10 +310,12 @@ def run(skip_refresh: bool = False, dry_run: bool = False) -> None:
         if dry_run:
             logger.info("Sorting answer (nothing changed):\n{}", json.dumps(answer, indent=1))
             return
-        changed |= apply_sorting(batch, answer, topics, sort_state)
+        changed |= apply_sorting(batch, answer, topics, sort_state, moves)
 
-    _write("topics.json", topics)
+    _save_topics(topics)
     _write("sort_state.json", sort_state)
+    for move in moves:
+        live.record_move(DATA, move["from"], move["to"], move["at"])
 
     conv_by_id = {c["agent_id"]: c for c in conversations}
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -322,7 +330,7 @@ def run(skip_refresh: bool = False, dry_run: bool = False) -> None:
         if answer.get("name") and topic.get("kind", "topic") == "topic" and answer["name"].strip() != topic["name"]:
             log(f"renamed {topic['name']!r} -> {answer['name'].strip()!r}")
             topic["name"] = answer["name"].strip()
-    _write("topics.json", topics)
+    _save_topics(topics)
     log("done:", ", ".join(sorted(changed)))
     names = [next(t["name"] for t in topics if t["id"] == tid) for tid in sorted(changed)]
     _summary("Updated " + ", ".join(names) + ".")

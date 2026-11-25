@@ -27,7 +27,12 @@ implementation consequence worth keeping.
   opened stays open. Text and delivery updates touch only what changed, so a running app is never
   reloaded.
 - **Two topics every workspace has.** "Other topics" holds small one-off exchanges. A subject that
-  comes up there again moves into a topic of its own. "Internal notes" holds conversations nobody
+  comes up there again moves into a topic of its own, and a conversation started there moves out the
+  moment it produces something lasting, such as the first working version of an app: its background
+  tells the assistant to call the topic's spin-off route, which takes the conversation, what it
+  delivered and its text into a new topic at once. Wherever a conversation goes on to a new topic
+  (this way, or by the sorter splitting it off), the old topic's thread keeps a line saying so, with a
+  button to the new topic. "Internal notes" holds conversations nobody
   but the agent spoke in, plus workspace updates and other upkeep.
 
 ## How it works

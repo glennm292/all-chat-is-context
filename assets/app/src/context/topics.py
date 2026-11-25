@@ -24,12 +24,13 @@ SKIPPED = {"/compact"}
 class ThreadItem(FrozenModel):
     """One line of a topic's conversation: a message, a note, or the divider before a conversation."""
 
-    kind: str = Field(description="'message', 'note' or 'divider'")
+    kind: str = Field(description="'message', 'note', 'divider', or 'moved' where the conversation went on to a new topic")
     who: str | None = Field(default=None, description="'you' or 'ai' for a message")
     text: str = Field(default="", description="The message exactly as exchanged, or a divider's label")
     at: str | None = Field(default=None, description="When it was sent (ISO 8601)")
     ref: str | None = Field(default=None, description="'<agent id>:<message index>', the message's place in its source")
     conversation: str | None = Field(default=None, description="The name of the chat it came from")
+    topic: str | None = Field(default=None, description="For 'moved': the id of the topic the conversation went on to")
 
 
 class Artifact(FrozenModel):
@@ -126,13 +127,19 @@ def load_topics(data_dir: Path, app_links: dict[str, str], busy_chats: set[str] 
                 is_note = m["who"] == "you" and NOTE_PATTERNS.match(m["text"])
                 thread.append(ThreadItem(kind="note" if is_note else "message", who=m["who"], text=m["text"],
                                          at=m["at"], ref=ref, conversation=conv["name"]))
+        names = {t["id"]: t["name"] for t in raw_topics}
+        for move in state["moves"]:
+            if move["from"] == raw["id"] and move["to"] in names:
+                note = ThreadItem(kind="moved", text=f"{names[move['to']]} moved to its own topic", at=move["at"], topic=move["to"])
+                where = next((n for n, item in enumerate(thread) if item.at and _parse(item.at) > _parse(move["at"])), len(thread))
+                thread.insert(where, note)
         stamps = [t.at for t in thread if t.at]
         delivered = state["artifacts"].get(raw["id"], [])
         topics.append(Topic(id=raw["id"], name=raw["name"], kind=raw["kind"], prose=state["prose"].get(raw["id"], raw["prose"]),
                             talking=bool(busy_chats and ((chat_id and chat_id in busy_chats) or (going and going["chat_id"] in busy_chats))),
                             first_at=min(stamps) if stamps else None, last_at=max(stamps) if stamps else None,
                             thread=thread,
-                            artifacts=[Artifact(**{k: v for k, v in a.items() if k != "zip"}, link=app_links.get(a["app"]) if a.get("app") else None)
+                            artifacts=[Artifact(**{k: v for k, v in a.items() if k not in ("zip", "chat")}, link=app_links.get(a["app"]) if a.get("app") else None)
                                        for a in [*delivered, *raw.get("artifacts", [])]]))
     ordinary = sorted((t for t in topics if t.kind == "topic"), key=lambda t: t.last_at or "", reverse=True)
     pinned = [t for kind in ("other", "internal") for t in topics if t.kind == kind]

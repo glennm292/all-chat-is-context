@@ -181,6 +181,15 @@ function renderThread() {
       d.querySelector(".sep-when").textContent = dividerDate(item.at);
       d.querySelector(".sep-about").textContent = item.text;
       d.title = `From the chat "${item.conversation}"`;
+    } else if (item.kind === "moved") {
+      d.className = "moved";
+      d.append(Object.assign(document.createElement("span"), { textContent: item.text }));
+      const target = TOPICS.find((t) => t.id === item.topic);
+      if (target) {
+        const go = Object.assign(document.createElement("button"), { textContent: `Open ${target.name}` });
+        go.onclick = () => select(target);
+        d.append(go);
+      }
     } else if (item.kind === "note") {
       d.className = "note";
       d.textContent = item.text.split("\n")[0].slice(0, 160);

@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from context import sync
@@ -69,3 +73,30 @@ def test_a_topic_the_sorter_names_but_does_not_exist_falls_back_to_other_topics(
     sync.apply_sorting([{"conversation": conv, "from": 0, "messages": conv["messages"]}],
                        {"pieces": [{"stretch": 1, "from": 0, "to": 1, "topic": "nonexistent", "about": "x"}]}, topics, {})
     assert next(t for t in topics if t["id"] == "other")["segments"][0]["agent_id"] == "a"
+
+
+def test_a_topic_added_while_sorting_ran_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sync, "DATA", tmp_path)
+    (tmp_path / "topics.json").write_text(json.dumps([{"id": "sudoku", "name": "Sudoku", "kind": "topic", "segments": []}]))
+    topics = sync.starting_topics()
+    sync._save_topics(topics)
+    assert [t["id"] for t in json.loads((tmp_path / "topics.json").read_text())] == ["sudoku", "other", "internal"]
+    assert topics[0]["id"] == "sudoku"
+
+
+def test_a_conversation_that_goes_on_to_a_new_topic_is_noted_where_it_was() -> None:
+    topics = _topics()
+    topics[0]["segments"].append({"agent_id": "a", "from": 0, "to": 2, "about": "Game"})
+    conv = _conv("a", ("you", "game"), ("ai", "ok"), ("you", "plan Japan"), ("ai", "plan"))
+    moves: list[dict] = []
+    answer = {"pieces": [{"stretch": 1, "from": 0, "to": 1, "topic": "new", "new_name": "Japan trip", "about": "Itinerary"}]}
+    sync.apply_sorting([{"conversation": conv, "from": 2, "messages": conv["messages"][2:]}], answer, topics, {}, moves)
+    assert moves == [{"from": "game", "to": "japan-trip", "at": conv["messages"][2]["at"]}]
+
+
+def test_a_brand_new_conversation_that_starts_a_topic_has_nowhere_to_be_noted() -> None:
+    moves: list[dict] = []
+    conv = _conv("n", ("you", "plan Japan"), ("ai", "plan"))
+    answer = {"pieces": [{"stretch": 1, "from": 0, "to": 1, "topic": "new", "new_name": "Japan trip", "about": "Itinerary"}]}
+    sync.apply_sorting([{"conversation": conv, "from": 0, "messages": conv["messages"]}], answer, _topics(), {}, moves)
+    assert moves == []
