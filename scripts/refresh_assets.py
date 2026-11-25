@@ -27,7 +27,7 @@ def main() -> None:
         sys.exit(f"No Context app at {source}")
     if TARGET.exists():
         shutil.rmtree(TARGET)
-    shutil.copytree(source, TARGET, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", ".pytest_cache"))
+    shutil.copytree(source, TARGET, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", ".pytest_cache", ".venv", "uv.lock"))
     for name, pattern in PORT_DEFAULTS.items():
         path = TARGET / "src" / "context" / name
         text, count = re.subn(pattern, PLACEHOLDERS[name], path.read_text())

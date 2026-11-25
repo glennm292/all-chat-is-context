@@ -3,7 +3,7 @@ name = "context"
 version = "0.1.0"
 description = "Every conversation with your AI, organized into living topics: where each subject stands, the work it produced, and the conversation to continue it."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "app-schema",
     "flask>=3.0",
@@ -26,6 +26,7 @@ packages = ["src/context"]
 
 [dependency-groups]
 dev = [
+    "imbue-common[testing]",
     # What runner_test.py asserts the API document with.
     "app-schema[testing]",
     # Used by test_no_type_errors in the ratchets, pinned to the version the shell and chat use.
@@ -34,3 +35,15 @@ dev = [
 
 # Makes this directory ty's project; without a [tool.ty] table ty keeps searching upward.
 [tool.ty]
+
+[tool.uv.sources]
+app-schema = { path = "../../libs/app_schema", editable = true }
+
+[tool.uv]
+# Supply-chain cooldown, the workspace root's window: a registry release is adopted
+# once it has been public this long, so a compromised one can be yanked first.
+exclude-newer = "14 days"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["*_test.py", "test_*.py"]

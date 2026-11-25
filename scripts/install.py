@@ -41,8 +41,23 @@ DOLLARS_PER_MESSAGE = 0.0011
 # The chat app routes Context drives; a chat app without them cannot carry a topic's conversation.
 CHAT_ROUTES = ["/api/chats/create", "/api/chats/{chat_id}/message", "/api/agents"]
 
+# Where the workspace keeps an app's own venv. Its presence marks the current layout, where each app is
+# a standalone uv project with its own lock and venv; an older workspace installs apps as uv tools.
+VENV_LINKS = Path("system/scripts/workspace_bare_scripts/venv_links.py")
+
+LEGACY_COMMAND = (
+    'bash -c "python3 system/scripts/forward_port.py --manifest system/apps/{package}/app.toml'
+    ' --url http://localhost:{port} && exec {name}"'
+)
+STANDALONE_COMMAND = (
+    'bash -c "python3 system/scripts/workspace_bare_scripts/venv_links.py ensure-project system/apps/{package}'
+    " && uv sync --locked --project system/apps/{package}"
+    " && python3 system/scripts/forward_port.py --manifest system/apps/{package}/app.toml --url http://localhost:{port}"
+    ' && exec system/apps/{package}/.venv/bin/{name}"'
+)
+
 PROGRAM_CONF = """[program:{name}]
-command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/{package}/app.toml --url http://localhost:{port} && exec {name}"
+command=python3 system/services/oom_priority/bin/oom_tag_service.py user {command}
 directory={workspace}
 autostart=true
 autorestart=true
@@ -77,6 +92,11 @@ def _conf_path(workspace: Path) -> Path:
 
 def _data_dir(workspace: Path) -> Path:
     return workspace / "data" / ".apps" / APP_NAME
+
+
+def standalone_layout(workspace: Path) -> bool:
+    """Whether apps here are standalone uv projects with their own venvs (the current layout)."""
+    return (workspace / VENV_LINKS).is_file()
 
 
 def check_workspace(workspace: Path) -> None:
@@ -150,7 +170,11 @@ def copy_app(workspace: Path, port: int) -> Path:
     target = _app_dir(workspace)
     if target.exists():
         shutil.rmtree(target)
-    shutil.copytree(APP_TEMPLATE, target, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", ".pytest_cache"))
+    shutil.copytree(
+        APP_TEMPLATE,
+        target,
+        ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", ".pytest_cache", ".venv", "uv.lock"),
+    )
     for name in ("runner.py", "live.py"):
         path = target / "src" / PACKAGE / name
         path.write_text(path.read_text(encoding="utf-8").replace(PORT_PLACEHOLDER, str(port)), encoding="utf-8")
@@ -159,8 +183,10 @@ def copy_app(workspace: Path, port: int) -> Path:
 
 def write_conf(workspace: Path, port: int) -> None:
     directory = CANONICAL_WORKSPACE if CANONICAL_WORKSPACE.resolve() == workspace.resolve() else workspace
+    template = STANDALONE_COMMAND if standalone_layout(workspace) else LEGACY_COMMAND
+    command = template.format(name=APP_NAME, package=PACKAGE, port=port)
     _conf_path(workspace).write_text(
-        PROGRAM_CONF.format(name=APP_NAME, package=PACKAGE, port=port, workspace=directory), encoding="utf-8"
+        PROGRAM_CONF.format(name=APP_NAME, command=command, workspace=directory), encoding="utf-8"
     )
 
 
@@ -172,8 +198,26 @@ def _run(cmd: list[str], workspace: Path) -> str:
 
 
 def install_package(workspace: Path) -> None:
-    _run(["uv", "tool", "install", "-e", f"system/apps/{PACKAGE}", "--reinstall"], workspace)
-    _run(["uv", "sync", "--all-packages"], workspace)
+    if not standalone_layout(workspace):
+        _run(["uv", "tool", "install", "-e", f"system/apps/{PACKAGE}", "--reinstall"], workspace)
+        _run(["uv", "sync", "--all-packages"], workspace)
+        return
+    # The app's own lock, seeded from the root lock so it starts on the built-ins' versions and
+    # resolves from the warm cache; then its own venv, linked where the workspace keeps venvs.
+    app_dir = _app_dir(workspace)
+    root_lock = workspace / "uv.lock"
+    if root_lock.is_file() and not (app_dir / "uv.lock").exists():
+        shutil.copyfile(root_lock, app_dir / "uv.lock")
+    _run(["python3", str(VENV_LINKS), "ensure-project", f"system/apps/{PACKAGE}"], workspace)
+    _run(["uv", "lock"], app_dir)
+    _run(["uv", "sync", "--locked"], app_dir)
+
+
+def sync_python(workspace: Path) -> list[str]:
+    """The interpreter that has the context package: the app's own venv, or the root venv."""
+    if standalone_layout(workspace):
+        return [f"system/apps/{PACKAGE}/.venv/bin/python"]
+    return ["uv", "run", "--no-sync", "python"]
 
 
 def start(workspace: Path, port: int, timeout: float = 90.0) -> None:
@@ -201,7 +245,7 @@ def add_routine(workspace: Path) -> bool:
         "--title", "Context: sort new conversations",
         "--what", "Files new conversations into topics in Context and rewrites the topics that changed.",
         "--app", APP_NAME, "--every", "10m", "--timeout", "30m",
-        "--", "env", "CONTEXT_DATA_DIR=data/.apps/context", "uv", "run", "--no-sync", "python", "-m", "context.sync",
+        "--", "env", "CONTEXT_DATA_DIR=data/.apps/context", *sync_python(workspace), "-m", "context.sync",
     ], workspace)
     return True
 
@@ -242,7 +286,8 @@ def verify(workspace: Path) -> int:
             failures.append(f"{path}: {e}")
     if not (workspace / "system" / "routines" / f"{ROUTINE}.toml").exists():
         failures.append("the sorting routine is missing")
-    tests = subprocess.run(["uv", "run", "pytest", "-q"], cwd=_app_dir(workspace), capture_output=True, text=True)
+    pytest = [".venv/bin/python", "-m", "pytest", "-q"] if standalone_layout(workspace) else ["uv", "run", "pytest", "-q"]
+    tests = subprocess.run(pytest, cwd=_app_dir(workspace), capture_output=True, text=True)
     if tests.returncode != 0:
         failures.append("the app's tests failed:\n" + tests.stdout.strip()[-1500:])
     for failure in failures:
