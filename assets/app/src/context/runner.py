@@ -174,9 +174,9 @@ ROUTE_TABLE: RouteTable = {
     ("GET", "/api/topics"): RouteModels(response_model=TopicsResponse),
     ("GET", "/api/skills/{name}"): RouteModels(response_model=SkillDoc),
     ("POST", "/api/topics/{topic_id}/message"): RouteModels(request_model=SayRequest, response_model=DoneResponse),
-    ("POST", "/api/topics/{topic_id}/artifacts"): RouteModels(request_model=DeliverRequest, response_model=DoneResponse, success_status=201),
+    ("POST", "/api/topics/{topic_id}/deliveries"): RouteModels(request_model=DeliverRequest, response_model=DoneResponse, success_status=201),
     ("PUT", "/api/topics/{topic_id}/text"): RouteModels(request_model=TextRequest, response_model=DoneResponse),
-    ("GET", "/artifacts/{path}"): SchemalessRoute(reason="a picture a topic produced or was sent"),
+    ("GET", "/media/{path}"): SchemalessRoute(reason="a picture a topic produced or was sent"),
     ("GET", "/health"): RouteModels(response_model=HealthResponse),
     ("POST", "/_csp-report"): SchemalessRoute(reason="the browser's report of what the page's policy blocked"),
 }
@@ -249,7 +249,7 @@ def say(topic_id: str) -> Response:
     return model_response(DoneResponse(status="ok"))
 
 
-@app.route("/api/topics/<topic_id>/artifacts", methods=["POST"])
+@app.route("/api/topics/<topic_id>/deliveries", methods=["POST"])
 def deliver(topic_id: str) -> Response:
     """Put something the assistant made in front of the person, in the topic's main pane."""
     body = parse_request_body(DeliverRequest)
@@ -264,10 +264,10 @@ def deliver(topic_id: str) -> Response:
         source = Path(body.path).resolve()
         if not source.is_file() or Path("data").resolve() not in source.parents or source.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
             return error_response("An image must be a picture file under the workspace's data folder", 400)
-        (Path(DATA_DIR) / "artifacts").mkdir(parents=True, exist_ok=True)
-        target = Path(DATA_DIR) / "artifacts" / f"{topic_id}-{source.name}"
+        (Path(DATA_DIR) / "pictures").mkdir(parents=True, exist_ok=True)
+        target = Path(DATA_DIR) / "pictures" / f"{topic_id}-{source.name}"
         shutil.copyfile(source, target)
-        artifact["src"] = f"artifacts/{target.name}"
+        artifact["src"] = f"pictures/{target.name}"
     else:
         return error_response("An app needs 'app', a skill an installed 'skill', an image a 'path'", 400)
     live.add_artifact(Path(DATA_DIR), topic_id, artifact)
@@ -316,10 +316,10 @@ def skill(name: str) -> Response:
     return error_response(f"No skill called {name} belongs to a topic", 404)
 
 
-ARTIFACT_ROOTS = {"artifacts": Path(DATA_DIR) / "artifacts", "uploads": Path("data/uploads")}
+ARTIFACT_ROOTS = {"pictures": Path(DATA_DIR) / "pictures", "uploads": Path("data/uploads")}
 
 
-@app.route("/artifacts/<path:path>")
+@app.route("/media/<path:path>")
 def artifact_file(path: str) -> Response:
     """A picture a topic produced or was sent."""
     root_name, _, rest = path.partition("/")

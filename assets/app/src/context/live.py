@@ -74,7 +74,7 @@ Where the topic stands:
 {text}
 
 The person sees this conversation beside the topic's main pane, which shows the things the topic produced. The work belongs to them: when you make or change something they should see (an app, a skill, a picture), put it in the main pane:
-  curl -s -X POST {CONTEXT_API}/api/topics/{tid}/artifacts -H 'Content-Type: application/json' -d '{{"kind": "app", "title": "<name>", "app": "<registered app name>"}}'
+  curl -s -X POST {CONTEXT_API}/api/topics/{tid}/deliveries -H 'Content-Type: application/json' -d '{{"kind": "app", "title": "<name>", "app": "<registered app name>"}}'
   (kind "skill" takes "skill": "<skill name>"; kind "image" takes "path": "<absolute path of a .png/.jpg/.svg under /home/user/workspace/data>")
 When where the topic stands has changed, rewrite its text (a few short plain paragraphs, the person's words, no headings or lists):
   curl -s -X PUT {CONTEXT_API}/api/topics/{tid}/text -H 'Content-Type: application/json' -d '{{"paragraphs": ["...", "..."]}}'

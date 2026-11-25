@@ -136,7 +136,7 @@ function renderThings() {
     list.append(b);
   }
   row.append(list);
-  const out = appAddress(shown.link) || shown.github || (shown.src && `/artifacts/${shown.src}`);
+  const out = appAddress(shown.link) || shown.github || (shown.src && `/media/${shown.src}`);
   if (out) {
     const a = Object.assign(document.createElement("a"), {
       className: "open-out", href: out, target: "_blank",
@@ -156,7 +156,7 @@ async function show(a) {
     stage.innerHTML = "";
     stage.append(Object.assign(document.createElement("iframe"), { src: appAddress(a.link), title: a.title }));
   } else if (a.kind === "image") {
-    stage.innerHTML = `<img alt="${escapeHtml(a.title)}" src="/artifacts/${a.src}">`;
+    stage.innerHTML = `<img alt="${escapeHtml(a.title)}" src="/media/${a.src}">`;
   } else if (a.kind === "skill") {
     stage.innerHTML = `<div class="stage-empty">Loading ${escapeHtml(a.title)}…</div>`;
     const r = await fetch(`/api/skills/${encodeURIComponent(a.skill)}`);

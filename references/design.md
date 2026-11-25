@@ -8,7 +8,7 @@ implementation consequence worth keeping.
 ## Principles
 
 - **The person owns the work; the AI does not gate it.** This reverses the usual chat UI, where
-  the conversation owns its artifacts and surfaces them when it chooses. In Context the topic's
+  the conversation owns what it produces and surfaces it when it chooses. In Context the topic's
   apps, skills and pictures sit in the middle pane whether the conversation is open or folded away.
 - **The middle pane is the delivery surface.** Apps run live inside it, skills show their
   instructions, and pictures show full size. The topic's text sits above it, with only its
@@ -41,7 +41,7 @@ Data lives under `data/.apps/context/`:
 | `sort_state.json` | per conversation, how many messages have been sorted | `context.sync` |
 | `live.json` | each topic's current text, its own chat (if Context started one), and the work delivered into it | `context.sync`, the API |
 | `excluded.json` | (optional) conversations that must never appear, e.g. tests that spoke in the person's name | by hand |
-| `artifacts/` | pictures delivered into topics | the API |
+| `pictures/` | pictures delivered into topics | the API |
 
 **Sorting** (`python -m context.sync`, the `context-sorting` routine, every 10 minutes):
 
@@ -71,7 +71,7 @@ cents per run when something changed, and nothing when nothing did.
 
 That background tells the assistant about two routes:
 
-- `POST /api/topics/<id>/artifacts` puts an app, skill or picture in the middle pane.
+- `POST /api/topics/<id>/deliveries` puts an app, skill or picture in the middle pane.
 - `PUT /api/topics/<id>/text` rewrites the topic's text.
 
 The text is escaped except for `<em>` and `<strong>`.

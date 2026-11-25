@@ -41,7 +41,7 @@ class Artifact(FrozenModel):
     link: str | None = Field(default=None, description="For an app: the address it opens at")
     skill: str | None = Field(default=None, description="For a skill: its name")
     github: str | None = Field(default=None, description="Where it is published, when it is")
-    src: str | None = Field(default=None, description="For an image: its path under /artifacts/")
+    src: str | None = Field(default=None, description="For an image: its path under /media/")
 
 
 class Topic(FrozenModel):
