@@ -25,7 +25,15 @@ implementation consequence worth keeping.
   exchanged. Lines the person didn't type (permission grants, task reports) show as small notes,
   and `/compact` is left out. The person's own messages are part of the record the instant they
   are sent: never greyed out, never pending. Any lag in processing is shown only by
-  "Working on it…".
+  "Working on it…". Each chat's messages stay together, and the chats go in order of their most
+  recent message, so the one that spoke last is at the bottom.
+- **Nothing needs the Chat app.** A permission the assistant asks for shows as a card in the
+  topic's conversation, read from the transcript (the latchkey request and its tagged answer);
+  its Review button opens Imbue Studio's own dialog through the workspace's relay
+  (`minds:open-request-modal`), and the card shows the answer once given.
+- **Unread is visible.** A topic the assistant wrote in (or asked a permission in) since the
+  person last looked gets a dot in the sidebar; what was seen is remembered per browser.
+  Internal notes never count as unread.
 - **Never undo what the reader did.** Refreshes keep scroll positions. A long message the reader
   opened stays open. Text and delivery updates touch only what changed, so a running app is never
   reloaded.

@@ -52,6 +52,27 @@ def test_a_long_pause_starts_a_new_divider_and_the_first_carries_its_label(data_
     assert [(d.text, d.at) for d in dividers] == [("Making the game", "2026-11-01T10:00:00Z"), ("", "2026-11-03T09:00:00Z")]
 
 
+def test_chats_go_in_order_of_their_most_recent_message(data_dir: Path) -> None:
+    # A helper chat began after Chat A but went quiet first, so it sits above Chat A's latest messages.
+    conversations = json.loads((data_dir / "conversations.json").read_text())
+    conversations.append({"agent_id": "agent-w", "name": "Helper", "started_by": "agent", "chat_id": None, "messages": [
+        _message("ai", "Freeing memory.", "2026-11-01T11:00:00Z"),
+        _message("ai", "Memory freed.", "2026-11-02T08:00:00Z"),
+    ]})
+    (data_dir / "conversations.json").write_text(json.dumps(conversations))
+    topics = json.loads((data_dir / "topics.json").read_text())
+    topics[0]["segments"].append({"agent_id": "agent-w", "from": 0, "to": None, "about": "Helping"})
+    (data_dir / "topics.json").write_text(json.dumps(topics))
+    thread = load_topics(data_dir, {}).topics[0].thread
+    assert [i.text for i in thread if i.kind == "message"] == [
+        "Freeing memory.", "Memory freed.", "make a duel game", "Here it is.", "add more figures", "Added 40."]
+    # A new message in the helper chat moves the whole chat below.
+    conversations[-1]["messages"].append(_message("ai", "Done.", "2026-11-04T08:00:00Z"))
+    (data_dir / "conversations.json").write_text(json.dumps(conversations))
+    thread = load_topics(data_dir, {}).topics[0].thread
+    assert [i.text for i in thread if i.kind == "message"][-3:] == ["Freeing memory.", "Memory freed.", "Done."]
+
+
 def test_other_topics_and_internal_notes_come_last_in_that_order(data_dir: Path) -> None:
     assert [t.id for t in load_topics(data_dir, {}).topics] == ["game", "other", "internal"]
 

@@ -31,6 +31,10 @@ dev = [
     "app-schema[testing]",
     # Used by test_no_type_errors in the ratchets, pinned to the version the shell and chat use.
     "ty==0.0.85",
+    # reload_browser_test.py drives the page in a browser; the version the workspace root pins.
+    "playwright==1.58.0",
+    # Gives the browser test's timeout mark effect, so a hung browser test fails instead of hanging.
+    "pytest-timeout>=2.3.0",
 ]
 
 # Makes this directory ty's project; without a [tool.ty] table ty keeps searching upward.
@@ -47,3 +51,7 @@ exclude-newer = "14 days"
 [tool.pytest.ini_options]
 testpaths = ["."]
 python_files = ["*_test.py", "test_*.py"]
+markers = [
+    "browser: marks tests that drive a browser",
+    "frontend: marks tests that read an app's frontend source",
+]

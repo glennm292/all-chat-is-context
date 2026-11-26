@@ -135,14 +135,20 @@ def is_busy(chat_id: str) -> bool:
     return any(a.get("chat_id") == chat_id and a.get("is_busy") for a in answer.get("agents", []))
 
 
-def chat_messages(chat_id: str) -> list[dict]:
-    """The topic conversation's messages so far, read from its transcript as they are written."""
-    homes = [MNGR_ROOT / "agents" / chat_id, *(MNGR_ROOT / "preserved").glob(f"*--{chat_id}")]  # running, or removed
+def transcript_path(agent_id: str) -> Path | None:
+    """Where a conversation's transcript is written, whether its agent is running or removed."""
+    homes = [MNGR_ROOT / "agents" / agent_id, *(MNGR_ROOT / "preserved").glob(f"*--{agent_id}")]
     for home in homes:
         for path in (home / "events").glob("*/common_transcript/events.jsonl"):
             if path.parent.parent.name != "logs":  # the converter's own log sits beside the conversation
-                return read_messages(path)
-    return []
+                return path
+    return None
+
+
+def chat_messages(chat_id: str) -> list[dict]:
+    """The topic conversation's messages so far, read from its transcript as they are written."""
+    path = transcript_path(chat_id)
+    return read_messages(path) if path else []
 
 
 def add_artifact(data_dir: Path, topic_id: str, artifact: dict) -> None:

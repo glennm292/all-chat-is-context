@@ -67,14 +67,56 @@ function markdown(src) {
   return out.join("");
 }
 
+// Unread: the assistant wrote in a topic since the person last looked at it. Remembered in this
+// browser as the time of the newest assistant message seen in each topic. Internal notes are
+// the assistant's own work, so they never count as unread.
+const SEEN_KEY = "context.seen";
+let seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "null");
+function lastAiAt(t) {
+  for (let n = t.thread.length - 1; n >= 0; n--) {
+    const i = t.thread[n];
+    if ((i.kind === "message" || i.kind === "permission") && i.who === "ai" && i.at) return Date.parse(i.at);
+  }
+  return 0;
+}
+function saveSeen() { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); }
+function startSeen() {
+  if (seen) return;
+  seen = {}; // first visit: everything already there counts as read
+  for (const t of TOPICS) seen[t.id] = lastAiAt(t);
+  saveSeen();
+}
+function looking() { return !document.hidden; }
+function markSeen(t) {
+  if (!t || !looking()) return;
+  const at = lastAiAt(t);
+  if ((seen[t.id] || 0) < at) { seen[t.id] = at; saveSeen(); }
+}
+function isUnread(t) {
+  return t.kind !== "internal" && t !== current && lastAiAt(t) > (seen?.[t.id] || 0);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!current || document.hidden) return;
+  markSeen(current);
+  renderTopics();
+});
+window.addEventListener("storage", (e) => {
+  if (e.key !== SEEN_KEY || !TOPICS.length) return;
+  seen = JSON.parse(e.newValue || "{}");
+  renderTopics();
+});
+
 function renderTopics() {
+  startSeen();
+  markSeen(current);
   const nav = $("topics");
   nav.querySelectorAll(".topic-link").forEach((n) => n.remove());
   for (const t of TOPICS) {
     const b = document.createElement("button");
-    b.className = "topic-link" + (t === current ? " selected" : "") + (t.kind !== "topic" ? " other" : "") + (t.kind === "internal" ? " internal" : "");
+    const unread = isUnread(t);
+    b.className = "topic-link" + (t === current ? " selected" : "") + (t.kind !== "topic" ? " other" : "") + (t.kind === "internal" ? " internal" : "") + (unread ? " unread" : "");
     b.dataset.topicId = t.id;
-    b.innerHTML = `${escapeHtml(t.name)}<span class="when">${relative(t.last_at)}</span>`;
+    b.innerHTML = `${unread ? `<span class="unread-dot" title="New messages"></span>` : ""}${escapeHtml(t.name)}<span class="when">${relative(t.last_at)}</span>`;
     b.onclick = () => select(t);
     nav.append(b);
   }
@@ -168,6 +210,43 @@ async function show(a) {
   }
 }
 
+// Permission requests: the review dialog is Imbue Studio's own, opened the way the chat opens it
+// (a message to the workspace, which passes it up to Imbue Studio). The answer shows as soon as
+// Imbue Studio reports it, and stays once its notice reaches the conversation.
+const VERDICT = { granted: "Approved", denied: "Denied", error: "Couldn't be completed", expired: "No answer was recorded" };
+const verdicts = new Map();
+function inImbueStudio() { return window.parent !== window; }
+function renderPermission(d, p) {
+  const resolution = p.resolution || verdicts.get(p.request_id) || null;
+  d.className = "permission " + (resolution || "waiting");
+  d.innerHTML = `<div class="perm-eyebrow">Permission request</div><div class="perm-title"></div>
+    <div class="perm-what"></div><div class="perm-why"></div><div class="perm-foot"></div>`;
+  d.querySelector(".perm-title").textContent = p.title;
+  d.querySelector(".perm-what").textContent = p.what;
+  d.querySelector(".perm-why").textContent = p.rationale;
+  const foot = d.querySelector(".perm-foot");
+  if (resolution) {
+    foot.append(Object.assign(document.createElement("span"), { className: "perm-verdict", textContent: VERDICT[resolution] || resolution }));
+  } else if (inImbueStudio()) {
+    const review = Object.assign(document.createElement("button"), { textContent: "Review" });
+    review.onclick = () => window.parent.postMessage({ type: "minds:open-request-modal", requestId: p.request_id }, "*");
+    foot.append(review);
+  } else {
+    foot.textContent = "Open Imbue Studio to review this request.";
+  }
+}
+window.addEventListener("message", (e) => {
+  if (e.source !== window.parent || e.data?.type !== "minds:permission-resolutions" || !Array.isArray(e.data.resolutions)) return;
+  let changed = false;
+  for (const r of e.data.resolutions) {
+    if (typeof r?.requestId === "string" && (r.resolution === "granted" || r.resolution === "denied") && verdicts.get(r.requestId) !== r.resolution) {
+      verdicts.set(r.requestId, r.resolution);
+      changed = true;
+    }
+  }
+  if (changed && current) renderThread();
+});
+
 function renderThread() {
   const thread = $("thread");
   const fromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
@@ -190,6 +269,8 @@ function renderThread() {
         go.onclick = () => select(target);
         d.append(go);
       }
+    } else if (item.kind === "permission") {
+      renderPermission(d, item.permission);
     } else if (item.kind === "note") {
       d.className = "note";
       d.textContent = item.text.split("\n")[0].slice(0, 160);
@@ -300,7 +381,8 @@ async function refresh() {
   TOPICS = data.topics;
   const now = TOPICS.find((t) => t.id === before.id) || TOPICS[0];
   const lastOf = (t) => t.thread.length ? t.thread[t.thread.length - 1].text : "";
-  const threadChanged = now.thread.length !== before.thread.length || now.talking !== before.talking || lastOf(now) !== lastOf(before);
+  const answers = (t) => t.thread.filter((i) => i.kind === "permission").map((i) => i.permission.resolution || "").join();
+  const threadChanged = now.thread.length !== before.thread.length || now.talking !== before.talking || lastOf(now) !== lastOf(before) || answers(now) !== answers(before);
   const proseChanged = now.prose.join() !== before.prose.join();
   const newArtifact = now.artifacts[0] && now.artifacts[0].title !== before.artifacts[0]?.title ? now.artifacts[0] : null;
   current = now;

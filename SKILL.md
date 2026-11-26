@@ -93,6 +93,8 @@ Tell the user, in plain terms:
 - **The middle pane is their work.** It shows the apps, skills and pictures each topic produced, and reloads them on its own when they change.
 - **Typing in a topic carries on that conversation.** It never starts a separate chat somewhere
   else.
+- **Everything happens in Context.** Permission requests show in the topic that asked, with a
+  Review button, and a dot in the sidebar marks topics with replies they haven't seen.
 
 ## Updating
 

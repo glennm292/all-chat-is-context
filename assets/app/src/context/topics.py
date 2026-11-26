@@ -11,6 +11,7 @@ from pathlib import Path
 from imbue.imbue_common.frozen_model import FrozenModel
 from pydantic import Field
 
+from context import live, permissions
 from context.live import chat_messages, continuing_chat, read_state, split_first_message
 
 # A pause this long inside one stretch of conversation starts a new divider.
@@ -23,16 +24,27 @@ NOTE_PATTERNS = re.compile(
 SKIPPED = {"/compact"}
 
 
+class PermissionRequest(FrozenModel):
+    """A permission the assistant asked the person for, answered in Imbue Studio's review dialog."""
+
+    request_id: str = Field(description="The request's id, which opens its review dialog")
+    title: str = Field(description="What is being asked for, in plain words")
+    what: str = Field(description="The specific access, or the folder for a file-sharing request")
+    rationale: str = Field(description="The assistant's reason for asking")
+    resolution: str | None = Field(default=None, description="'granted', 'denied' or 'error' once answered, 'expired' if never answered; empty while waiting")
+
+
 class ThreadItem(FrozenModel):
     """One line of a topic's conversation: a message, a note, or the divider before a conversation."""
 
-    kind: str = Field(description="'message', 'note', 'divider', or 'moved' where the conversation went on to a new topic")
+    kind: str = Field(description="'message', 'note', 'divider', 'moved' where the conversation went on to a new topic, or 'permission' for a permission request")
     who: str | None = Field(default=None, description="'you' or 'ai' for a message")
     text: str = Field(default="", description="The message exactly as exchanged, or a divider's label")
     at: str | None = Field(default=None, description="When it was sent (ISO 8601)")
     ref: str | None = Field(default=None, description="'<agent id>:<message index>', the message's place in its source")
     conversation: str | None = Field(default=None, description="The name of the chat it came from")
     topic: str | None = Field(default=None, description="For 'moved': the id of the topic the conversation went on to")
+    permission: PermissionRequest | None = Field(default=None, description="For 'permission': the request and its answer")
 
 
 class Artifact(FrozenModel):
@@ -105,37 +117,52 @@ def load_topics(data_dir: Path, app_links: dict[str, str], busy_chats: set[str] 
             live = [(i, m) for i, m in enumerate(chat_messages(chat_id)) if m["text"].strip() not in SKIPPED]
             if live:
                 stretches.append(({"about": "In Context"}, {"agent_id": chat_id, "name": f"Context: {raw['name']}"}, live))
+        # Each chat stays together, oldest message first within it; the chats themselves go in
+        # order of their most recent message, so the one that spoke last is at the bottom.
         stretches.sort(key=lambda s: s[2][0][1]["at"])
-
-        thread: list[ThreadItem] = []
-        previous, previous_agent = None, None
-        for seg, conv, msgs in stretches:
-            if conv["agent_id"] != previous_agent:
-                previous = None  # a different chat always starts with its own divider
-            previous_agent = conv["agent_id"]
-            for i, m in msgs:
-                at = _parse(m["at"])
-                if previous is None or at - previous > CONVERSATION_GAP:
-                    thread.append(ThreadItem(kind="divider", text=seg["about"] if previous is None else "", at=m["at"],
-                                             conversation=conv["name"]))
-                previous = at
-                ref = f"{conv['agent_id']}:{i}"
-                first = split_first_message(m["text"]) if m["who"] == "you" else None
-                if first:
-                    thread.append(ThreadItem(kind="note", who="you", text="This topic's background went to the assistant with your message.\n\n" + first[0],
-                                             at=m["at"], ref=None, conversation=conv["name"]))
-                    thread.append(ThreadItem(kind="message", who="you", text=first[1], at=m["at"], ref=ref,
-                                             conversation=conv["name"]))
-                    continue
-                is_note = m["who"] == "you" and NOTE_PATTERNS.match(m["text"])
-                thread.append(ThreadItem(kind="note" if is_note else "message", who=m["who"], text=m["text"],
-                                         at=m["at"], ref=ref, conversation=conv["name"]))
+        by_chat: dict[str, list] = {}
+        for stretch in stretches:
+            by_chat.setdefault(stretch[1]["agent_id"], []).append(stretch)
+        groups: list[tuple[datetime, list[ThreadItem]]] = []
+        for chat_stretches in by_chat.values():
+            items: list[ThreadItem] = []
+            previous = None  # a different chat always starts with its own divider
+            for seg, conv, msgs in chat_stretches:
+                for i, m in msgs:
+                    at = _parse(m["at"])
+                    if previous is None or at - previous > CONVERSATION_GAP:
+                        items.append(ThreadItem(kind="divider", text=seg["about"] if previous is None else "", at=m["at"],
+                                                conversation=conv["name"]))
+                    previous = at
+                    ref = f"{conv['agent_id']}:{i}"
+                    first = split_first_message(m["text"]) if m["who"] == "you" else None
+                    if first:
+                        items.append(ThreadItem(kind="note", who="you", text="This topic's background went to the assistant with your message.\n\n" + first[0],
+                                                at=m["at"], ref=None, conversation=conv["name"]))
+                        items.append(ThreadItem(kind="message", who="you", text=first[1], at=m["at"], ref=ref,
+                                                conversation=conv["name"]))
+                        continue
+                    is_note = m["who"] == "you" and NOTE_PATTERNS.match(m["text"])
+                    items.append(ThreadItem(kind="note" if is_note else "message", who=m["who"], text=m["text"],
+                                            at=m["at"], ref=ref, conversation=conv["name"]))
+            spans = [(_parse(msgs[0][1]["at"]), _parse(msgs[-1][1]["at"])) for _, _, msgs in chat_stretches]
+            _add_permission_requests(items, chat_stretches[0][1], spans)
+            groups.append((max(last for _, last in spans), items))
         names = {t["id"]: t["name"] for t in raw_topics}
         for move in state["moves"]:
             if move["from"] == raw["id"] and move["to"] in names:
                 note = ThreadItem(kind="moved", text=f"{names[move['to']]} moved to its own topic", at=move["at"], topic=move["to"])
-                where = next((n for n, item in enumerate(thread) if item.at and _parse(item.at) > _parse(move["at"])), len(thread))
-                thread.insert(where, note)
+                when = _parse(move["at"])
+                # Inside the chat it interrupted, at its moment; between chats, a line of its own.
+                inside = next((items for last, items in groups
+                               if any(i.at and _parse(i.at) <= when for i in items) and last > when), None)
+                if inside is None:
+                    groups.append((when, [note]))
+                else:
+                    where = next((n for n, item in enumerate(inside) if item.at and _parse(item.at) > when), len(inside))
+                    inside.insert(where, note)
+        groups.sort(key=lambda g: g[0])
+        thread = [item for _, items in groups for item in items]
         stamps = [t.at for t in thread if t.at]
         delivered = state["artifacts"].get(raw["id"], [])
         topics.append(Topic(id=raw["id"], name=raw["name"], kind=raw["kind"], prose=state["prose"].get(raw["id"], raw["prose"]),
@@ -151,8 +178,37 @@ def load_topics(data_dir: Path, app_links: dict[str, str], busy_chats: set[str] 
     return TopicsResponse(topics=ordinary + pinned)
 
 
-# Files whose changes do not change what the user sees.
-_IGNORED_DIRS = {".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", "tests", ".git"}
+# A request never answered, filed this soon after a chat's last message in a topic, belongs to that stretch.
+PERMISSION_TAIL = timedelta(minutes=30)
+# A request nobody answered stops showing after this long.
+PERMISSION_STALE = timedelta(days=1)
+
+
+def _add_permission_requests(items: list[ThreadItem], conv: dict, spans: list[tuple[datetime, datetime]]) -> None:
+    """Put the permission requests this chat filed while it was in this topic (its spans here) among its messages."""
+    path = live.transcript_path(conv["agent_id"])
+    if path is None or not spans:
+        return
+    newest = datetime.now(spans[0][0].tzinfo)
+    for request in permissions.read_requests(path):
+        at = _parse(request["at"])
+        resolution = request["resolution"]
+        if resolution is None and newest - at >= PERMISSION_STALE:
+            resolution = "expired"  # never answered, and no longer worth answering
+        # Inside this stretch of the chat; a request still waiting also shows just after it.
+        tail = PERMISSION_TAIL if request["resolution"] is None else timedelta(0)
+        if not any(first <= at <= last + tail for first, last in spans):
+            continue
+        item = ThreadItem(kind="permission", who="ai", text=request["rationale"], at=request["at"], conversation=conv["name"],
+                          permission=PermissionRequest(**{**{k: request[k] for k in ("request_id", "title", "what", "rationale")},
+                                                          "resolution": resolution}))
+        where = next((n for n, i in enumerate(items) if i.at and _parse(i.at) > at), len(items))
+        items.insert(where, item)
+
+
+# Files whose changes do not change what the user sees: hidden files and folders (.venv, caches,
+# a test run's .coverage), installed packages, compiled Python, and tests.
+_IGNORED_DIRS = {"node_modules", "__pycache__", "tests"}
 _VERSION_TTL = 3.0
 _versions: dict[str, tuple[float, str | None]] = {}
 
@@ -165,9 +221,9 @@ def _newest_change(root: Path) -> str | None:
         return None
     newest = 0
     for here, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _IGNORED_DIRS]
+        dirs[:] = [d for d in dirs if d not in _IGNORED_DIRS and not d.startswith(".")]
         for f in files:
-            if f.endswith(("_test.py", ".pyc")) or f.startswith("test_"):
+            if f.startswith((".", "test_")) or f.endswith(("_test.py", ".pyc")) or f == "conftest.py":
                 continue
             try:
                 newest = max(newest, os.stat(os.path.join(here, f)).st_mtime_ns)
