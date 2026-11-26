@@ -31,7 +31,10 @@ WebSockets.
 
 import base64
 import hashlib
+import json
 import os
+import shutil
+import time
 from pathlib import Path
 
 from app_schema.api_schema import (
@@ -48,13 +51,7 @@ from imbue.imbue_common.logging import setup_logging
 from loguru import logger
 from pydantic import Field
 
-import json
-import subprocess
-import time
-
-import shutil
-
-from context import live
+from context import live, workspace_apps
 from context.topics import SkillDoc, TopicsResponse, load_topics, read_skill
 
 
@@ -327,11 +324,9 @@ def app_links() -> dict[str, str]:
     """Each app's address, as the workspace opens it; re-read at most once a minute."""
     global _app_links
     if time.time() - _app_links[0] > 60:
-        listed = subprocess.run(["uv", "run", "--no-sync", "workspace-layout", "list"], capture_output=True, text=True)
-        if listed.returncode == 0:
-            _app_links = (time.time(), {a["name"]: a["link"] for a in json.loads(listed.stdout)["apps"]})
-        else:
-            logger.warning("Could not list the workspace's apps: {}", listed.stderr.strip())
+        listed = workspace_apps.listed_apps()
+        if listed is not None:
+            _app_links = (time.time(), {a["name"]: a["link"] for a in listed})
     return _app_links[1]
 
 

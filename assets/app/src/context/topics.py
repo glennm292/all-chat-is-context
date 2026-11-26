@@ -1,7 +1,9 @@
 """Assemble each topic's thread from the stored conversations, messages exactly as exchanged."""
 
 import json
+import os
 import re
+import time
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -43,6 +45,7 @@ class Artifact(FrozenModel):
     skill: str | None = Field(default=None, description="For a skill: its name")
     github: str | None = Field(default=None, description="Where it is published, when it is")
     src: str | None = Field(default=None, description="For an image: its path under /media/")
+    version: str | None = Field(default=None, description="Changes whenever the thing itself is modified, so a view of it can reload")
 
 
 class Topic(FrozenModel):
@@ -139,11 +142,74 @@ def load_topics(data_dir: Path, app_links: dict[str, str], busy_chats: set[str] 
                             talking=bool(busy_chats and ((chat_id and chat_id in busy_chats) or (going and going["chat_id"] in busy_chats))),
                             first_at=min(stamps) if stamps else None, last_at=max(stamps) if stamps else None,
                             thread=thread,
-                            artifacts=[Artifact(**{k: v for k, v in a.items() if k not in ("zip", "chat")}, link=app_links.get(a["app"]) if a.get("app") else None)
+                            artifacts=[Artifact(**{k: v for k, v in a.items() if k not in ("zip", "chat", "version")},
+                                                link=app_links.get(a["app"]) if a.get("app") else None,
+                                                version=artifact_version(a, data_dir))
                                        for a in [*delivered, *raw.get("artifacts", [])]]))
     ordinary = sorted((t for t in topics if t.kind == "topic"), key=lambda t: t.last_at or "", reverse=True)
     pinned = [t for kind in ("other", "internal") for t in topics if t.kind == kind]
     return TopicsResponse(topics=ordinary + pinned)
+
+
+# Files whose changes do not change what the user sees.
+_IGNORED_DIRS = {".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", "tests", ".git"}
+_VERSION_TTL = 3.0
+_versions: dict[str, tuple[float, str | None]] = {}
+
+
+def _newest_change(root: Path) -> str | None:
+    """The latest modification time of anything under root that makes up the thing itself."""
+    if root.is_file():
+        return str(root.stat().st_mtime_ns)
+    if not root.is_dir():
+        return None
+    newest = 0
+    for here, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _IGNORED_DIRS]
+        for f in files:
+            if f.endswith(("_test.py", ".pyc")) or f.startswith("test_"):
+                continue
+            try:
+                newest = max(newest, os.stat(os.path.join(here, f)).st_mtime_ns)
+            except OSError:
+                continue
+    return str(newest) if newest else None
+
+
+def _app_dir(name: str) -> Path | None:
+    """The folder of the app registered under this name."""
+    for manifest in Path("system/apps").glob("*/app.toml"):
+        if re.search(rf'^name\s*=\s*"{re.escape(name)}"\s*$', manifest.read_text(), re.M):
+            return manifest.parent
+    return None
+
+
+def artifact_version(artifact: dict, data_dir: Path) -> str | None:
+    """A stamp that moves when the app's code, the skill's files or the picture change; re-read every few seconds."""
+    if artifact.get("app"):
+        key = "app:" + artifact["app"]
+    elif artifact.get("skill"):
+        key = "skill:" + artifact["skill"]
+    elif artifact.get("src"):
+        key = "src:" + artifact["src"]
+    else:
+        return None
+    cached = _versions.get(key)
+    if cached and time.monotonic() - cached[0] < _VERSION_TTL:
+        return cached[1]
+    root: Path | None = None
+    if artifact.get("app"):
+        root = _app_dir(artifact["app"])
+    elif artifact.get("skill"):
+        if re.fullmatch(r"[a-z0-9-]+", artifact["skill"]):
+            root = Path(".agents/skills") / artifact["skill"]
+    else:
+        base, _, rest = artifact["src"].partition("/")
+        root = {"pictures": data_dir / "pictures", "uploads": Path("data/uploads")}.get(base)
+        root = root / rest if root else None
+    version = _newest_change(root) if root else None
+    _versions[key] = (time.monotonic(), version)
+    return version
 
 
 class SkillDoc(FrozenModel):

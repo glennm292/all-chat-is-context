@@ -20,7 +20,7 @@ INJECTED = re.compile(r"^\s*(<[a-z-]+[ >]|Base directory for this skill|Caveat: 
 
 
 def agent_labels() -> dict[str, dict]:
-    out = subprocess.run(["uv", "run", "mngr", "list", "--format", "json"], capture_output=True, text=True, check=True)
+    out = subprocess.run(["uv", "run", "--no-sync", "mngr", "list", "--format", "json"], capture_output=True, text=True, check=True)
     data = json.loads(out.stdout)
     return {a["id"]: a for a in data.get("agents", data if isinstance(data, list) else [])}
 

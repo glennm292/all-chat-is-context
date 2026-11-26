@@ -129,7 +129,7 @@ function renderThings() {
   list.className = "thing-list";
   for (const a of current.artifacts) {
     const b = document.createElement("button");
-    b.className = "thing-tab" + (a === shown ? " on" : "");
+    b.className = "thing-tab" + (shown && a.title === shown.title ? " on" : "");
     b.dataset.artifact = a.title;
     b.innerHTML = `<span class="thing-kind">${KIND_LABEL[a.kind]}</span>${escapeHtml(a.title)}`;
     b.onclick = () => show(a);
@@ -156,7 +156,7 @@ async function show(a) {
     stage.innerHTML = "";
     stage.append(Object.assign(document.createElement("iframe"), { src: appAddress(a.link), title: a.title }));
   } else if (a.kind === "image") {
-    stage.innerHTML = `<img alt="${escapeHtml(a.title)}" src="/media/${a.src}">`;
+    stage.innerHTML = `<img alt="${escapeHtml(a.title)}" src="/media/${a.src}${a.version ? `?v=${a.version}` : ""}">`;
   } else if (a.kind === "skill") {
     stage.innerHTML = `<div class="stage-empty">Loading ${escapeHtml(a.title)}…</div>`;
     const r = await fetch(`/api/skills/${encodeURIComponent(a.skill)}`);
@@ -275,6 +275,21 @@ say.addEventListener("keydown", async (e) => {
   watchFast(60);
 });
 
+// The thing on show was modified: reload it once the edits (and any restart) settle.
+let reloadTimer = null, reloadingTo = null;
+function reloadSoon(latest) {
+  const key = `${current.id}/${latest.title}/${latest.version}`;
+  if (key === reloadingTo) return; // already waiting on this change
+  reloadingTo = key;
+  clearTimeout(reloadTimer);
+  const topicId = current.id;
+  reloadTimer = setTimeout(() => {
+    reloadingTo = null;
+    if (current.id !== topicId || !shown || shown.title !== latest.title) return;
+    show(current.artifacts.find((a) => a.title === latest.title) || latest);
+  }, 4000);
+}
+
 // Keep the page current: quickly while a reply is coming, slowly otherwise.
 let fastPolls = 0;
 function watchFast(n) { fastPolls = Math.max(fastPolls, n); }
@@ -296,6 +311,11 @@ async function refresh() {
   if (now.artifacts.length && !document.getElementById("stage")) {
     renderContext(); // the topic just got its first piece of work
   } else {
+    const latest = shown && now.artifacts.find((a) => a.title === shown.title);
+    if (latest) {
+      if (latest.version !== shown.version) reloadSoon(latest);
+      else shown = latest;
+    }
     if (newArtifact) show(newArtifact);
     else if (now.artifacts.length !== before.artifacts.length) renderThings();
     if (proseChanged) {

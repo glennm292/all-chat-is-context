@@ -13,6 +13,7 @@ Subcommands (run from the workspace root):
 """
 
 import argparse
+import importlib
 import json
 import re
 import shutil
@@ -43,6 +44,8 @@ CHAT_ROUTES = ["/api/chats/create", "/api/chats/{chat_id}/message", "/api/agents
 
 # Where the workspace keeps an app's own venv. Its presence marks the current layout, where each app is
 # a standalone uv project with its own lock and venv; an older workspace installs apps as uv tools.
+# own-process: other-tree -- the installer runs the target workspace's own link helper in that workspace, which
+# may be on another release than the checkout this script runs from
 VENV_LINKS = Path("system/scripts/workspace_bare_scripts/venv_links.py")
 
 LEGACY_COMMAND = (
@@ -100,6 +103,8 @@ def standalone_layout(workspace: Path) -> bool:
 
 
 def check_workspace(workspace: Path) -> None:
+    # own-process: other-tree -- names the target workspace's port helper, which the app's program runs there,
+    # to check that workspace has it before writing a program that needs it
     for required in ("system/apps", "system/supervisord.conf.d", "system/scripts/forward_port.py", "system/routines"):
         if not (workspace / required).exists():
             raise InstallError(f"{workspace} does not look like a Minds workspace (no {required})")
@@ -117,8 +122,10 @@ def chat_routes_missing() -> list[str]:
 
 def history_size(workspace: Path) -> tuple[int, int]:
     """Conversations and messages the first sort will read, counted the way Context reads them."""
+    # import-path: other-tree -- the check runs before Context is installed anywhere, so the reader comes from the
+    # app copy this skill bundles, whose path is known only once the skill is found on disk
     sys.path.insert(0, str(APP_TEMPLATE / "src"))
-    from context import transcripts  # noqa: PLC0415 -- the template's own reader, not an installed package
+    transcripts = importlib.import_module("context.transcripts")
 
     count, messages = 0, 0
     for _, _, path in transcripts.transcript_files():
@@ -240,6 +247,8 @@ def add_routine(workspace: Path) -> bool:
     """Add the sorting routine unless it is there; answers whether it was added."""
     if (workspace / "system" / "routines" / f"{ROUTINE}.toml").exists():
         return False
+    # own-process: other-tree -- the routine is added by the target workspace's own routines command, in that
+    # workspace, which may be on another release than the checkout this script runs from
     _run([
         "uv", "run", "--no-sync", "routines", "add", ROUTINE,
         "--title", "Context: sort new conversations",
@@ -286,7 +295,7 @@ def verify(workspace: Path) -> int:
             failures.append(f"{path}: {e}")
     if not (workspace / "system" / "routines" / f"{ROUTINE}.toml").exists():
         failures.append("the sorting routine is missing")
-    pytest = [".venv/bin/python", "-m", "pytest", "-q"] if standalone_layout(workspace) else ["uv", "run", "pytest", "-q"]
+    pytest = [".venv/bin/python", "-m", "pytest", "-q"] if standalone_layout(workspace) else ["uv", "run", "--no-sync", "pytest", "-q"]
     tests = subprocess.run(pytest, cwd=_app_dir(workspace), capture_output=True, text=True)
     if tests.returncode != 0:
         failures.append("the app's tests failed:\n" + tests.stdout.strip()[-1500:])

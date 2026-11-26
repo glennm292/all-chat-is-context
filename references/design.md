@@ -12,7 +12,10 @@ implementation consequence worth keeping.
   apps, skills and pictures sit in the middle pane whether the conversation is open or folded away.
 - **The middle pane is the delivery surface.** Apps run live inside it, skills show their
   instructions, and pictures show full size. The topic's text sits above it, with only its
-  first paragraph showing until the person asks for more.
+  first paragraph showing until the person asks for more. Each delivered thing carries a
+  `version` stamp (the newest change to the app's code, the skill's files or the picture); when
+  the stamp of the one on show moves, the pane reloads it a few seconds later, so a change the
+  assistant makes appears without the person reloading anything.
 - **Fluid, not widgety.** A topic is a few paragraphs of plain text that rewrite themselves as
   things move. There are no status badges, to-do lists or sorted action items.
 - **Conversations continue in place.** Typing in a topic continues the chat that is still on that

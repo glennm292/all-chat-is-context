@@ -17,7 +17,7 @@ program = "context"
 stop_when_no_windows = true
 
 # How update-app boots a throwaway preview of this app: on a free port, over a
-# scratch copy of its data (see .agents/skills/update-app/scripts/preview_app.py).
+# scratch copy of its data (see .agents/skills/update-app/python/update_app_skill/preview_app.py).
 [preview]
 env = {CONTEXT_PORT = "{port:main}", CONTEXT_HOST = "{host}", CONTEXT_DATA_DIR = "{copy:data}"}
 copies = {data = "data/.apps/context"}

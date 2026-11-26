@@ -1,6 +1,6 @@
 """Keep Context current: re-read every conversation, sort what is new into topics, rewrite the topics that changed.
 
-Run as `uv run python -m context.sync` from the repo root (the Context routine does this on a schedule).
+Run as `uv run --no-sync --project system/apps/context python -m context.sync` from the repo root (the Context routine does this on a schedule).
 
   sort_state.json  agent id -> how many of its messages have been sorted
   topics.json      the topics and the stretches of conversation that make them up (this file is owned here)
@@ -15,7 +15,6 @@ import html
 import json
 import os
 import re
-import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -23,7 +22,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from context import live, transcripts
+from context import live, transcripts, workspace_apps
 from context.claude_p import claude_p_completion
 from context.topics import NOTE_PATTERNS, SKIPPED
 
@@ -237,8 +236,8 @@ def workspace_works() -> tuple[dict[str, str], list[str]]:
     """The apps (registered name -> display name) and skills this workspace has, for naming what a topic produced."""
     global _works_cache
     if _works_cache is None:
-        listed = subprocess.run(["uv", "run", "--no-sync", "workspace-layout", "list"], capture_output=True, text=True)
-        apps = {a["name"]: a["display_name"] for a in json.loads(listed.stdout)["apps"]} if listed.returncode == 0 else {}
+        listed = workspace_apps.listed_apps()
+        apps = {a["name"]: a["display_name"] for a in listed} if listed is not None else {}
         skills = sorted(p.parent.name for p in Path(".agents/skills").glob("*/SKILL.md"))
         _works_cache = (apps, skills)
     return _works_cache

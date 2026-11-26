@@ -47,7 +47,7 @@ Run each step from the workspace root, and show the user what it found before mo
 ### 1. See what is there `[script]`
 
 ```
-python3 .agents/skills/all-chat-is-context/scripts/install.py check
+uv run --no-sync .agents/skills/all-chat-is-context/scripts/install.py check
 ```
 
 It reports:
@@ -66,7 +66,7 @@ Tell the user, in plain terms, what the first sort will read and roughly what it
 that, sorting costs cents per run when something changed, and nothing when nothing did. Then:
 
 ```
-python3 .agents/skills/all-chat-is-context/scripts/install.py install
+uv run --no-sync .agents/skills/all-chat-is-context/scripts/install.py install
 ```
 
 It does four things:
@@ -82,7 +82,7 @@ and the page fills in on its own while it runs.
 ### 3. Check it `[script]`
 
 ```
-python3 .agents/skills/all-chat-is-context/scripts/install.py verify
+uv run --no-sync .agents/skills/all-chat-is-context/scripts/install.py verify
 ```
 
 ### 4. Show it `[prose]`
@@ -90,7 +90,7 @@ python3 .agents/skills/all-chat-is-context/scripts/install.py verify
 Open the app beside the chat with `uv run --no-sync workspace-layout open context --beside`.
 Tell the user, in plain terms:
 - **Topics appear as the first sort finishes.** For a large history it can take a few minutes.
-- **The middle pane is their work.** It shows the apps, skills and pictures each topic produced.
+- **The middle pane is their work.** It shows the apps, skills and pictures each topic produced, and reloads them on its own when they change.
 - **Typing in a topic carries on that conversation.** It never starts a separate chat somewhere
   else.
 
